@@ -15,5 +15,5 @@ The calculator can generate a table with details of each payment, over ranging f
 or for the entire amortization interval.
 
 If you find this calculator useful, and especially if it helps you to save money, 
-a contribution would be much appreciated! (10% of the amount you save is suggested). 
+a contribution would be much appreciated!
 Please send to: Henry Olders, 369 Lansdowne Avenue, Westmount, QC H3Z 2L5, Canada.
