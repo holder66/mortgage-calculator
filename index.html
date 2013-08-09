@@ -1,0 +1,533 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"  "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+  <title>JavaScript Canadian Mortgage Calculator v2.0</title>
+	
+<script type="text/javascript">
+
+/*
+Problems yet to fix, as of 05-1-26:
+With a specified term and a weekly or biweekly payment interval,
+the final payment does not come out on the right date. I will need
+to find out how banks do this.
+
+Release v2.0 fixes the problem of
+the Royal Bank using 366 days in the denominator 
+in leap years, and 365 days in other years, rather than 365.25 days
+all the time.
+*/
+//************************************************************
+// Function to return the number of days in a year. This is
+// calculated by determining whether the 29th day of the 2nd 
+// month is in feb (leap year) or in mar (non-leap year).
+function daysInYear(year)
+	{
+	d = new Date();
+	d.setFullYear(year, 1, 29);
+	if (d.getMonth()==1)
+		{
+		return 366;
+		}
+		else
+		{
+		return 365;
+		}
+	}
+//************************************************************
+// Function to round a number to two decimal places.
+function round(x)
+	{
+	return Math.round(x*100)/100;
+	}
+//************************************************************
+// Function to display a date object as yyyy-mm-dd
+function dispdate(x)
+	{
+	var month = x.getMonth();
+	var day = x.getDate();
+	month += 1;
+	var y = "", z = "";
+	if(month<10) {y = "0";}
+	if(day<10) {z = "0";}
+	return x.getFullYear()+"-"+y+
+		month+"-"+z+day;
+	}
+//************************************************************
+// function for fixed number of decimal points
+if(!Number.prototype.toFixed)
+Number.prototype.toFixed=function(f)
+	{
+	if (isNaN(f*=1) || f<0 || f>20) f=0;
+	var s='',x=this.valueOf(),m='';
+	if (this<0){ s='-'; x*=-1; }
+	if (x>=Math.pow(10,21)) 
+		{
+		m=x.toString();
+		}
+	else
+		{
+		m=Math.round(Math.pow(10,f)*x).toString();
+		if (f!=0)
+			{
+			var k=m.length;
+			if (k<=f)
+				{
+				var z='00000000000000000000'.substring(0,f+1-k);
+				m=z+m;
+				k=f+1;
+				}
+			var a = m.substring(0,k-f);
+			var b = m.substring(k-f);
+			m = a+'.'+b;
+			}
+		}
+	if (m=='0') s='';
+	return s+m;
+	}
+//************************************************************
+// function which does the actual work of calculation of the mortgage
+// the parameter Schedule is true if a schedule of payments is wanted
+function calculate(Schedule) 
+	{
+ 	// get entered values from the form
+ 	
+ 	// principal amount
+	var principal = parseFloat(document.mortgage.principal.value);
+    
+	// interest
+	// convert percentage to a decimal
+	 var interest = parseFloat(document.mortgage.interest.value) / 100;
+	// verify that a value has been entered for interest
+	 if (interest=="" || isNaN(interest))
+    		{
+    		alert ("Please enter a value for interest!");
+    		return false;
+    		}
+    	
+	// payment
+	var EnteredPayment = parseFloat(document.mortgage.amount.value);
+	var years = parseFloat(document.mortgage.years.value);
+    
+	// payment frequency
+	// number of payment periods per year, 12 for monthly, 
+	// 24 for semi-monthly, -1 for weekly or biweekly
+	// as the period will need to be calculated to take
+	// leap years into account.
+	// PeriodIndex is the index value into two strings:
+	var PeriodIndex = document.mortgage.Period.selectedIndex;
+	// period is obtained from a table of values
+	var period = PeriodValues[PeriodIndex];
+	// as is Days Between Payments
+	var DaysBetweenPayments = PeriodDaysBetweenPayments[PeriodIndex];
+    
+	// compounding
+	// set compounding to 2 for semi-annual compounding, 
+	// 12 for monthly compounding, and -1 for simple interest
+
+	var CompoundingIndex = document.mortgage.Compounding.selectedIndex;
+	var compounding = CompoundingValues[CompoundingIndex];
+   	
+	// term
+	var TermIndex = document.mortgage.SelectTerm.selectedIndex;
+	var term = TermValues[TermIndex];
+
+	// Verify that either the Payment amount or the Amortization period was specified:
+	if ((EnteredPayment=="" || isNaN(EnteredPayment)) && (years=="" || isNaN(years))) 
+		{
+		alert("Please enter a value for either the Payment amount or the Repayment period!");
+		return false;
+		}
+		
+	// calculate a value for period, if set to -1 (ie for weekly or biweekly payments)
+	var tempPeriod = period;
+	if (period==-1)
+		{
+		tempPeriod = daysInYear(2005) / DaysBetweenPayments;
+		}
+
+	// if a value was entered for Payment amount, use it; 
+	// otherwise, calculate it based on amortization interval
+	
+	var mi = compounding==-1 ? 1+ interest/tempPeriod 
+		: Math.pow(1 + interest / compounding, compounding / tempPeriod );
+	var paym = (principal*(mi - 1) / (1 - Math.pow(mi,-(years* tempPeriod))));
+	
+	var PaymentAmount = (isNaN(EnteredPayment) || EnteredPayment==0) ? paym : EnteredPayment;
+    
+	var balance = principal;			// for each payment, the balance of the principal left
+	var InterestAmount = 0;			// the portion of the payment going to interest
+	var PrincipalAmount = 0;			// the portion of the payment going to pay down the balance
+	var AccumulatedInterest = 0;		// running total of interest paid
+	var AccumulatedPrincipal = 0;		// running total of principal paid down
+	var AccumulatedTotal = Number(0);
+	var FinalPayment = 0;			// amount of the last payment
+	var TermBalance = 0;			// balance remaining at end of term
+    
+	var paydate = new Date();		// set starting date to today
+	var StartDate = new Date();
+    
+	StartDate.setFullYear(parseInt(document.mortgage.StartYear.value), 
+    	parseInt(document.mortgage.StartMonth.value) - 1, 
+    	parseInt(document.mortgage.StartDay.value));
+
+	// for starting dates greater than the 28th, using monthly payments, 
+	// reset the start date to the 28th, and alert the user.
+	if (StartDate.getDate()>28 && period==12)	
+		{
+		StartDate.setDate(28);
+		alert("For dates greater than the 28th of the month, we change the date to 28 to simplify calculations.");
+		}    
+    	
+	// for semi-monthly payments, set the start date to the first or 16th of the
+	// following month, and alert the user.
+	if (period==24)
+    		{
+    		alert("for semi-monthly payments, the payment days will be the 1st and the 16th of each month, and the starting date will be the next 1st or 16th. Interest will be calculated based on 24 equal periods per year, regardless of the actual interval between payments.");
+    		
+
+	    	if (StartDate.getDate() < 17)
+	    		{
+	    		StartDate.setDate(16);
+	    		}
+	    		else
+	    		{
+		    	StartDate.setDate(1);
+		    	StartDate.setMonth(StartDate.getMonth() + 1);
+			}
+		}
+
+	paydate = new Date(StartDate.valueOf());
+	var TermDate = new Date(StartDate.valueOf());
+	TermDate.setMonth(TermDate.getMonth()+term);
+
+	var NumberOfPayments = 0;
+    
+    
+	// If the user requested that the payment schedule be displayed,
+	// open a separate window and print out a header; start a table.    
+	if (Schedule)
+		{
+		if (w != null) {w.close();}
+		var w = window.open();
+		var d = w.document;
+		d.write ("<center><strong>Mortgage Schedule of Payments</strong></center>\n");
+		d.write ("<br>Mortgage Principal: "+principal.toFixed(2)+" at "+(interest*100).toFixed(2)+"% annual interest, ");
+		if (!isNaN(years))
+			{
+			d.write ("amortized over "+years+" years, ");
+			}
+		d.write ("using "+CompoundingOptions[CompoundingIndex]
+			+", to be repaid with "
+			+ PeriodOptions[PeriodIndex]
+			+" payments of "+PaymentAmount.toFixed(2)+" each");
+		if (term != -1)
+			{
+			d.write (", for a term of "
+			+TermOptions[TermIndex]);
+			}
+		d.write (". The mortgage start date is "
+			+ dispdate(StartDate)+".");
+			
+		// start a table and print out column headings
+		d.write ("<table border=0 cellspacing=3 cellpadding=1 width=90% cols=8>\n");
+		d.write ("<tr align=right><th width=10 >Payment<th>Date<th>Principal<th>Interest<th>Accumulated<br>Principal<th>Accumulated<br>Interest<th>Accumulated<br>Total<th>Balance</tr><br><br>\n");
+		}
+		
+				
+	// in a loop, while the balance remains nonzero:
+	while (balance != 0) 
+    	{
+    	NumberOfPayments ++;			// increment payment counter
+
+	// determine the date of the next payment
+    	if (period==12)				// if payments are monthly
+		{
+    		paydate.setMonth(paydate.getMonth()+1);    //add one month to paydate
+    		}
+    		else
+    		{
+    		if (period==24)				// if payments are semi-monthly
+    			{
+    			// if the previous payment was on the 16th of the month
+    			// set the current paydate to the first of the next month
+    			if (paydate.getDate()==16)	// test if paydate is the 16th
+    				{
+    				paydate.setMonth(paydate.getMonth() + 1);
+    				paydate.setDate(1);
+    				}
+    				else					// ie paydate is 1st of month
+    				{
+    				paydate.setDate(16);	// set paydate to 16th of same month
+    				}
+    			}
+    			else		// ie payments are weekly or biweekly
+    			{
+    			paydate.setTime(paydate.getTime()+(1000*60*60*24*DaysBetweenPayments));
+	    		}
+	    	}
+	
+	// if period = -1 (ie weekly or biweekly payments), calculate a tempPeriod
+	// based on whether it's a leap year or not
+	
+	if (period==-1)
+		{
+		tempPeriod = daysInYear (paydate.getYear()) /DaysBetweenPayments
+		}
+	    	
+	// if the compounding interval is set to -1, use a
+	// straight interest calculation; otherwise, compound interest
+    	InterestAmount = compounding==-1 ? 
+		balance*interest/tempPeriod 
+    		: (Math.pow(1 + interest/compounding,compounding/tempPeriod) - 1) * balance;
+    	
+    	// if the payment amount is too small to cover interest, alert the user
+	// and exit the function with a return value of false.
+    	if(InterestAmount >= PaymentAmount)
+    		{
+    		alert("Payments are too small, the payment frequency is too low, or the interest rate is too high, or some combination! Payments must be greater than "+InterestAmount.toFixed(2));
+    		return false;
+    		}
+
+	// update the values for accumulated interest and principal amount
+    		
+	AccumulatedInterest += InterestAmount;
+    	PrincipalAmount = PaymentAmount - InterestAmount;
+    	
+    	// if we've overshot the amount owing
+    	if (AccumulatedPrincipal + PrincipalAmount > principal)
+    		{
+    		PrincipalAmount = principal - AccumulatedPrincipal;
+    		FinalPayment = PrincipalAmount + InterestAmount;
+		AccumulatedTotal += FinalPayment;
+    		}
+    		else
+    		{
+    		AccumulatedTotal += PaymentAmount;
+    		FinalPayment = PrincipalAmount + InterestAmount;
+    		}
+    	AccumulatedPrincipal += PrincipalAmount;
+    	balance -= PrincipalAmount;
+    	
+    	// to accommodate rounding-off errors, if balance is very small
+    	// set it to zero, in order to terminate the loop
+    	if (balance < .0001)
+    		{
+    		balance = 0;
+    		}
+
+   	var totalyears = round((paydate-StartDate)/(1000*60*60*24*365.25));
+    	
+    	// if a schedule of payments was requested, and we're still
+    	// within the term, print out current payment info
+    	if (Schedule && (term==-1 || (paydate <= TermDate && term>0)))
+    		{
+	    	d.write("<tr align=right>");
+	    	d.write("<td>"+ NumberOfPayments);
+	    	d.write("<td>"+ dispdate(paydate));
+	    	d.write("<td>"+ PrincipalAmount.toFixed(2));
+	    	d.write("<td>"+ InterestAmount.toFixed(2));
+	    	d.write("<td>"+ AccumulatedPrincipal.toFixed(2));
+	    	d.write("<td>"+ AccumulatedInterest.toFixed(2));
+	    	d.write("<td>"+ AccumulatedTotal.toFixed(2));
+	    	d.write("<td>"+ balance.toFixed(2));
+	    	d.write("</tr>");
+	    	}
+	    	
+	    // if this is the first time through the loop, get the
+	    // date of the first payment
+	    if (NumberOfPayments == 1)
+	    	{
+	    	FirstPaymentDate = new Date(paydate.valueOf());
+	    	}
+	    	
+	    // if the end of the specified term was reached,
+	    // or if term is until paid off and balance is zero,
+	    // write out the balance remaining, number of payments, etc.
+	    if ((paydate >= TermDate && term > 0 && TermBalance ==0)
+	    	|| (term == -1 && balance == 0))
+	    	{
+	    	TermBalance = balance;
+	    	var TermNumberOfPayments = NumberOfPayments;
+	    	var TermFinalPayment = FinalPayment;
+	    	var TermLastPaymentDate = new Date(paydate.valueOf());
+	    	var TermAccumulatedTotal = AccumulatedTotal;
+	    	var TermAccumulatedInterest = AccumulatedInterest;
+//alert(TermLastPaymentDate);
+	    	}
+		
+    	}			// end of loop
+//alert(TermBalance);    	
+    if (Schedule)
+		{
+	    d.write("</table>");
+	    if (term != -1)
+	    	{
+		    d.write ("<br>At the end of the "+TermOptions[TermIndex]
+		    	+" term, the outstanding balance will be "
+		    	+TermBalance.toFixed(2)+". If renewed at the same terms, the entire principal would be repaid after a total of "+totalyears+" years.<br>Over the term, ");
+		    }
+		    else
+		    {
+		    d.write ("<br>The final payment will be "+TermFinalPayment.toFixed(2)+". Over the amortization period, ");
+		    }
+		d.write ("you will have paid a total of "+ TermAccumulatedTotal.toFixed(2)
+			+" of which "+ TermAccumulatedInterest.toFixed(2)
+			+", or "+ round(TermAccumulatedInterest*100/TermAccumulatedTotal)
+			+"%, is interest. This represents "
+			+ round(TermAccumulatedInterest*100/principal)
+			+"% of the principal amount.");
+	    d.close();
+	    }
+
+	// display the results of the calculation	
+	document.mortgage.startdate.value = dispdate(StartDate);
+	document.mortgage.TotalYears.value = totalyears;
+	document.mortgage.PaymentSize.value = PaymentAmount.toFixed(2);
+	document.mortgage.firstdate.value = dispdate(FirstPaymentDate);
+	document.mortgage.TermLength.value = TermOptions[TermIndex];
+	document.mortgage.PaymentNumber.value = TermNumberOfPayments;
+	document.mortgage.FinalPayment.value = TermFinalPayment.toFixed(2);
+	document.mortgage.LastPaymentDate.value = dispdate(TermLastPaymentDate);
+	document.mortgage.RemainingBalance.value = TermBalance.toFixed(2);
+	document.mortgage.TotalPayment.value = TermAccumulatedTotal.toFixed(2);
+	document.mortgage.TotalInterest.value = TermAccumulatedInterest.toFixed(2);
+	document.mortgage.InterestPercent.value = round(TermAccumulatedInterest*100/TermAccumulatedTotal);
+	document.mortgage.PrincipalPercent.value = round(TermAccumulatedInterest*100/principal);
+    
+	return true;
+ 
+	}			// end of calculate function
+
+</script>
+
+</head>
+
+<body bgcolor="linen">
+
+<table>
+<tr><td colspan="2" align=center><b>JavaScript Mortgage Calculator v2.0</b></td></tr>
+<tr><td colspan=2 align=right><small>Copyright &copy 2005 Henry Olders</td></tr>
+
+<tr>
+<td colspan="2"><small>This calculator allows you to specify either the amount of each payment, or the amortization in years. Payments can be on a weekly, biweekly, semi-monthly, or a monthly basis. You can specify whether compounding follows the Canadian formula (semi-annually, or 2 compounding intervals per year), or the American (monthly, or 12 compounding intervals per year). </td></tr>
+<td colspan="2"><small>For variable rate mortages, simple interest (no compounding) is usually used, so this option should be selected. </td></tr>
+<td colspan="2"><small>The calculator can generate a table with details of each payment, over terms ranging from 3 months to 10 years, or for the entire amortization interval. </td></tr>
+<td colspan="2"><small>If you find this calculator useful, and especially if it helps you to save money, a contribution would be much appreciated! (10% of the amount you save is suggested). Please send to: Henry Olders, 369 Lansdowne Avenue, Westmount, QC H3Z 2L5, Canada.</small></td></tr>
+<td colspan="2"><small>Please report any errors to <a href="mailto:henry.olders@mcgill.ca">Henry Olders</a>. Note that some browsers (eg Safari) use an older version of JavaScript which will not work correctly with this web page.</small></td></tr>
+
+<form name="mortgage">
+ 
+    <tr>
+	    <td colspan="2" align=center><b>Enter Mortgage Information:</b></td>
+	</tr>
+    <tr>
+      <td align=right width=400>Principal amount of the Mortgage (any currency):</td>
+      <td><input type="text" name="principal" value=100000 size="12"></td>
+    </tr>
+    <tr>
+      <td align=right>Annual rate of interest (%):</td>
+      <td><input type="text" name="interest" value = 10.0 size="12"></td>
+    </tr>
+    <tr>
+    <td colspan="2">Specify EITHER the payment amount OR the amortization interval:</tr>
+    <tr>
+      <td align=right>Payment amount:</td>
+      <td><input type="text" name="amount" size="12" onchange="document.mortgage.years.value='';"></td>
+    </tr>
+    <tr>
+      <td align=right>Repayment interval in years (amortization interval):</td>
+      <td><input type="text" name="years" size="12" value=25 onchange="document.mortgage.amount.value='';"></td>
+    </tr>
+  	<tr><td align=right valign=top>Payment frequency:</td><td><select name="Period"></select></td></tr>
+		
+	<script type="text/javascript">	
+		// use javascript for/in loop to fill in the options for Period
+		// Arrays to hold values and options for multiple choice form elements
+		var PeriodOptions = ['monthly','semi-monthly','bi-weekly','weekly'];
+		var PeriodValues = [12,24, -1, -1];
+		var PeriodDaysBetweenPayments = [,,14,7];
+	
+		for (var i in PeriodOptions)
+		document.mortgage.Period.options[i] = new Option(PeriodOptions[i], PeriodValues[i]);
+	</script>
+	
+	    <tr>
+      <td align=right valign=top>Compounding:</td>
+      <td><select name="Compounding"></select></td></tr>
+
+	<script type="text/javascript">	
+		// use javascript for/in loop to fill in the options for Compounding
+		// Arrays to hold values and options for multiple choice form elements
+		var CompoundingOptions = ['semi-annual (Canadian) compounding','monthly (American) compounding','simple interest (no compounding)'];
+		var CompoundingValues = [2,12,-1];
+	
+		for (var i in CompoundingOptions)
+		document.mortgage.Compounding.options[i] = new Option(CompoundingOptions[i], CompoundingValues[i]);
+	</script>
+
+    <tr>
+      <td align=right valign=top>Start Date for mortgage:</td>
+      <td><input type="text" name="StartYear" size="4" maxlength=4>-
+      <input type="text" name="StartMonth" size="2" maxlength=2>-
+      <input type="text" name="StartDay" size="2" maxlength=2>
+      </td></tr>
+	<script type="text/javascript">
+		var today = new Date();
+		document.mortgage.StartYear.value = today.getFullYear();
+		document.mortgage.StartMonth.value = today.getMonth() + 1;
+		document.mortgage.StartDay.value = today.getDate();
+	</script>	
+		
+	<tr><td align=right valign=top>Term:</td><td><select name="SelectTerm"></select></td></tr>
+		
+	<script type="text/javascript">	
+		// use javascript for/in loop to fill in the options for SelectTerm
+		// Arrays to hold values and options for multiple choice form elements
+	
+		var TermValues = [-1,3,6,12,24,36,48,60,84,120];
+		var TermOptions = ['until paid off','3 months','6 months','1 year','2 years','3 years','4 years','5 years','7 years','10 years'];
+	
+		for (var i in TermOptions)
+		document.mortgage.SelectTerm.options[i] = new Option(TermOptions[i],TermValues[i]);
+		document.mortgage.SelectTerm.selectedIndex = 7;
+	</script>
+   	
+    <tr>
+    <td align=right>
+      <input type="button" value="Compute" onclick="calculate(false);">
+    </td>
+    <td><input type="button" value="Display Payment Schedule" onclick="calculate(true);">
+    </td>
+    </tr>
+
+    <tr><td colspan="2" align=center>
+      <b><br><br>Payment Information:</b>
+    </td></tr>
+    <tr><td colspan="2">
+    Your mortgage starts on 
+    <input type="text" name="startdate" size="10">
+    and is amortized over (ie would be fully paid off in) 
+    <input type="text" name="TotalYears" size="5"> years. 
+    Your first payment of 
+	<input type="text" name="PaymentSize" size="12">
+	will be on <input type="text" name="firstdate" size="10">.
+	During the term of <input type="text" name="TermLength" size="10">, 
+	 you will make <input type="text" name="PaymentNumber" size="6">
+	payments, with the final payment of 
+	<input type="text" name="FinalPayment" size="12">
+	on <input type="text" name="LastPaymentDate" size="10">.
+	At the end of the term, the balance remaining will be 
+	<input type="text" name="RemainingBalance" size="12">.
+	You will have paid a total of
+	<input type="text" name="TotalPayment" size="12">
+	of which <input type="text" name="TotalInterest" size="12">,
+	or <input type="text" name="InterestPercent" size="5">%,
+	will be interest. This represents
+	<input type="text" name="PrincipalPercent" size="6">%
+	of the principal amount.</td></tr>
+  
+  </table>
+</form>
+
+</body>
+</html>
